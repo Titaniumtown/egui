@@ -69,6 +69,7 @@ pub struct TextEdit<'t> {
     text: &'t mut dyn TextBuffer,
     hint_text: WidgetText,
     hint_text_font: Option<FontSelection>,
+    hint_forward: bool,
     id: Option<Id>,
     id_salt: Option<Id>,
     font_selection: FontSelection,
@@ -122,6 +123,7 @@ impl<'t> TextEdit<'t> {
             text,
             hint_text: Default::default(),
             hint_text_font: None,
+            hint_forward: false,
             id: None,
             id_salt: None,
             font_selection: Default::default(),
@@ -219,6 +221,12 @@ impl<'t> TextEdit<'t> {
     #[inline]
     pub fn hint_text_font(mut self, hint_text_font: impl Into<FontSelection>) -> Self {
         self.hint_text_font = Some(hint_text_font.into());
+        self
+    }
+
+    #[inline]
+    pub const fn hint_forward(mut self, hint_forward: bool) -> Self {
+        self.hint_forward = hint_forward;
         self
     }
 
@@ -473,6 +481,7 @@ impl TextEdit<'_> {
             text,
             hint_text,
             hint_text_font,
+            hint_forward,
             id,
             id_salt,
             font_selection,
@@ -689,29 +698,58 @@ impl TextEdit<'_> {
         };
 
         if ui.is_rect_visible(rect) {
-            if text.as_str().is_empty() && !hint_text.is_empty() {
+            painter.galley(galley_pos, galley.clone(), text_color);
+
+            let text_is_empty = text.as_str().is_empty();
+            if (hint_forward | text_is_empty) && !hint_text.is_empty() {
                 let hint_text_color = ui.visuals().weak_text_color();
-                let hint_text_font_id = hint_text_font.unwrap_or(font_id.into());
+                let hint_text_font_id = hint_text_font.unwrap_or(font_id.clone().into());
+
+                let available_width = if multiline {
+                    desired_inner_size.x
+                } else {
+                    f32::INFINITY
+                };
+
                 let galley = if multiline {
                     hint_text.into_galley(
                         ui,
                         Some(TextWrapMode::Wrap),
-                        desired_inner_size.x,
+                        available_width,
                         hint_text_font_id,
                     )
                 } else {
                     hint_text.into_galley(
                         ui,
                         Some(TextWrapMode::Extend),
-                        f32::INFINITY,
+                        available_width,
                         hint_text_font_id,
                     )
                 };
-                let galley_pos = align
+
+                let rows = galley.rows.len();
+
+                let vec_offset = if hint_forward && !text_is_empty {
+                    let gallery_offset_x: f32 = ui.fonts_mut(|fonts| {
+                        prev_text
+                            .chars()
+                            .map(|chr| fonts.glyph_width(&font_id, chr))
+                            .sum()
+                    });
+
+                    let galley_offset_y: f32 = (rows - 1) as f32 * row_height;
+
+                    vec2(gallery_offset_x, galley_offset_y)
+                } else {
+                    Vec2::ZERO
+                };
+
+                let hint_galley_pos = align
                     .align_size_within_rect(galley.size(), rect)
                     .intersect(rect)
                     .min;
-                painter.galley(galley_pos, galley, hint_text_color);
+
+                painter.galley(hint_galley_pos + vec_offset, galley, hint_text_color);
             }
 
             let has_focus = ui.memory(|mem| mem.has_focus(id));
